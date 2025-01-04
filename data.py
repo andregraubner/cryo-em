@@ -54,22 +54,3 @@ class CryoETDataset(Dataset):
             'tomograms': tomogram,
             'labels': labels
         }
-
-base_path = "/scratch2/andregr/cryo-em/data/10441"
-    
-# Create dataset
-dataset = CryoETDataset(base_path)
-
-# Create dataloader
-dataloader = DataLoader(
-    dataset,
-    batch_size=2,
-    shuffle=True,
-    num_workers=4,
-    pin_memory=True
-)
-
-# Example iteration
-for batch in dataloader:
-    print(batch)
-    break
