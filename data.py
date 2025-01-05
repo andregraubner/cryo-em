@@ -7,50 +7,27 @@ from pathlib import Path
 import glob
 import torch
 import numpy as np
+from einops import rearrange
 
 class CryoETDataset(Dataset):
-    def __init__(self, base_path, ts_range=range(13), slice_range=range(100, 107)):
-        self.base_path = Path(base_path)
-        self.samples = []
-        
-        # Collect all paired tomogram and annotation files
-        for ts_idx in ts_range:
-            ts_name = f"TS_{ts_idx}"
-            recon_path = self.base_path / ts_name / "Reconstructions/VoxelSpacing10.000"
-            
-            # Path to tomogram
-            tomo_path = recon_path / "Tomograms" / "100" / f"{ts_name}.mrc"
-            annotations = []
+    def __init__(self, path):
 
-            anno_dirs = [recon_path / "Annotations" / str(idx) for idx in slice_range]
-            anno_files = [list(anno_dir.glob("*.mrc"))[0] for anno_dir in anno_dirs]
+        self.data = glob.glob(path)
 
-            self.samples.append({
-                "tomogram": tomo_path,
-                "annotations": anno_files
-            })
+        #self.class_weights = torch.zeros(7)
+        #for labels in self.labels:
+        #    self.class_weights += labels.sum(axis=(1,2,3))
+        #self.class_weights /= self.class_weights.sum()
+        #self.class_weights = 1 / self.class_weights
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        sample = self.samples[idx]
-        
-        # Load tomogram
-        with mrcfile.open(sample['tomogram']) as mrc:
-            tomogram = torch.from_numpy(mrc.data.astype('float32'))
             
-        # Load annotation
-        labels = []
-        for annotation in sample['annotations']:
-            with mrcfile.open(annotation) as mrc:
-                annotation = torch.from_numpy(mrc.data.astype('float32'))
-            
-            labels.append(annotation)
+        data = np.load(self.data[idx], allow_pickle=True)
 
-        labels = torch.stack(labels, dim=0)
-            
         return {
-            'tomograms': tomogram,
-            'labels': labels
+            'tomograms': data.item()["tomogram"],
+            'labels': data.item()["labels"],
         }
