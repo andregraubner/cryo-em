@@ -10,9 +10,12 @@ import numpy as np
 from einops import rearrange
 
 class CryoETDataset(Dataset):
-    def __init__(self, path):
+    def __init__(self, path, run_ids=[]):
 
         self.data = glob.glob(path)
+
+        # filter for files where path basename starts with any of the run_ids
+        self.data = [d for d in self.data if any([d.split("/")[-1].startswith(run_id) for run_id in run_ids])]
 
         #self.class_weights = torch.zeros(7)
         #for labels in self.labels:

@@ -17,6 +17,7 @@ from matplotlib.colors import Normalize
 import copick
 import os
 import shutil
+import pandas as pd
 
 # First, rename json files to appease copick
 source_dir = '/scratch2/andregr/cryo-em/data/train/overlay'
@@ -38,30 +39,42 @@ objects = [obj for obj in root.pickable_objects if obj.is_particle]
 # Now, create segmentation masks for each run
 for run in tqdm(root.runs):
 
-    tomogram = root.runs[0].voxel_spacings[0].get_tomograms("denoised")[0].numpy()
-    tomogram = (tomogram - 2.06502e-07) / 5.5327368e-11 # normalize tomogram
+    tomogram = run.voxel_spacings[0].get_tomograms("denoised")[0].numpy()
 
     labels = np.zeros_like(tomogram)
     z, y, x = np.ogrid[:labels.shape[0], :labels.shape[1], :labels.shape[2]]
-    
+
+    annotations = []
     for obj in objects:
-        picks = root.runs[0].get_picks(object_name=obj.name)[0]
+        picks = run.get_picks(object_name=obj.name)[0]
         for point in picks.points:
             dist = np.sqrt((z - point.location.z / 10)**2 + (y - point.location.y / 10)**2 + (x - point.location.x / 10)**2)
             sphere_mask = dist <= obj.radius / 10
             labels[sphere_mask] = obj.label
 
+            # Append data for this point
+            annotations.append({
+                "experiment": run.name,
+                "particle_type": obj.name,
+                "x": point.location.x,
+                "y": point.location.y,
+                "z": point.location.z
+            })
+
+    annotations = pd.DataFrame(annotations)
+    annotations.to_csv(f"preprocessed/annotations/{run.name}.csv")
+
     # Rearrange into patches
     tomogram_patches = rearrange(
-        tomogram[2:-2],
+        tomogram[28:-28, 27:-27, 27:-27],
         '(d pd) (h ph) (w pw) -> (d h w) pd ph pw',
-        pd=90, ph=90, pw=90
+        pd=64, ph=64, pw=64
     )
     
     label_patches = rearrange(
-        labels[2:-2],
+        labels[28:-28, 27:-27, 27:-27],
         '(d pd) (h ph) (w pw) -> (d h w) pd ph pw',
-        pd=90, ph=90, pw=90
+        pd=64, ph=64, pw=64
     )
     
     # Convert to list of patches
@@ -73,4 +86,4 @@ for run in tqdm(root.runs):
             "tomogram": tomogram,
             "labels": labels,
         }
-        np.save(f"preprocessed/{run.name}_{idx}.npy", data)
+        np.save(f"preprocessed/tensors/{run.name}_{idx}.npy", data)
