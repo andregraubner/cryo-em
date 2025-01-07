@@ -42,6 +42,7 @@ from monai.networks.nets import SwinUNETR
 import wandb
 from monai.networks.nets import UNet
 from monai.losses import DiceLoss
+import transformers
 
 wandb.init(project="cryo-em")
 
@@ -56,7 +57,7 @@ model = torch.nn.DataParallel(UNet(
     num_res_units=2,
 )).to(device)
 
-criterion = DiceLoss(include_background=False, to_onehot_y=True, softmax=True)
+criterion = DiceLoss(to_onehot_y=True, softmax=True)
 
 #model = torch.nn.DataParallel(SegFormer3D(in_channels=1, num_classes=7)).to(device)
 
@@ -67,8 +68,6 @@ criterion = DiceLoss(include_background=False, to_onehot_y=True, softmax=True)
 #    feature_size=48,
 #    use_checkpoint=True,
 #)).to(device)
-
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
 # Create dataset
 dataset = CryoETDataset(
@@ -87,6 +86,9 @@ dataloader = DataLoader(
 class_weights = [1,1,0,2,1,2,1]
 class_weights = torch.tensor(class_weights).float().to(device)
 
+optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
+scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 0, len(dataloader) * 60)
+
 #criterion = DiceLoss(to_onehot_y=True, softmax=True, weight=class_weights)
 
 train_transforms = Compose([
@@ -101,7 +103,7 @@ train_transforms = Compose([
 train_transforms.set_random_state(seed=123)
 
 # Example iteration
-for epoch in range(10000):
+for epoch in range(60):
     model.train()
     for batch in tqdm(dataloader):
 
@@ -123,8 +125,13 @@ for epoch in range(10000):
 
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
-        wandb.log({"loss": loss.item()})
+        wandb.log({
+            "loss": loss.item(),
+            "lr": scheduler.get_last_lr()[0]
+        })
+        
 
     if epoch % 20 == 0:
 
@@ -135,3 +142,6 @@ for epoch in range(10000):
 
         score = inference(model, "TS_99_9")
         wandb.log({"score": score})
+
+score = inference(model, "TS_99_9")
+wandb.log({"score": score})
