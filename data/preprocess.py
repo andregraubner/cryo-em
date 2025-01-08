@@ -41,7 +41,7 @@ for run in tqdm(root.runs):
 
     tomogram = run.voxel_spacings[0].get_tomograms("denoised")[0].numpy()
 
-    labels = np.zeros_like(tomogram)
+    labels = np.zeros_like(tomogram, dtype=np.uint8)
     z, y, x = np.ogrid[:labels.shape[0], :labels.shape[1], :labels.shape[2]]
 
     annotations = []
@@ -50,7 +50,7 @@ for run in tqdm(root.runs):
         for point in picks.points:
             dist = np.sqrt((z - point.location.z / 10)**2 + (y - point.location.y / 10)**2 + (x - point.location.x / 10)**2)
             sphere_mask = dist <= obj.radius / 10
-            labels[sphere_mask] = obj.label
+            labels[sphere_mask] = int(obj.label)
 
             # Append data for this point
             annotations.append({
@@ -64,26 +64,4 @@ for run in tqdm(root.runs):
     annotations = pd.DataFrame(annotations)
     annotations.to_csv(f"preprocessed/annotations/{run.name}.csv")
 
-    # Rearrange into patches
-    tomogram_patches = rearrange(
-        tomogram[28:-28, 27:-27, 27:-27],
-        '(d pd) (h ph) (w pw) -> (d h w) pd ph pw',
-        pd=64, ph=64, pw=64
-    )
-    
-    label_patches = rearrange(
-        labels[28:-28, 27:-27, 27:-27],
-        '(d pd) (h ph) (w pw) -> (d h w) pd ph pw',
-        pd=64, ph=64, pw=64
-    )
-    
-    # Convert to list of patches
-    tomogram_patches = list(tomogram_patches)
-    label_patches = list(label_patches)
-
-    for idx, (tomogram, labels) in enumerate(zip(tomogram_patches, label_patches)):
-        data = {
-            "tomogram": tomogram,
-            "labels": labels,
-        }
-        np.save(f"preprocessed/tensors/{run.name}_{idx}.npy", data)
+    np.save(f'preprocessed/labels/{run.name}.npy', labels)

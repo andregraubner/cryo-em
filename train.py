@@ -43,6 +43,7 @@ import wandb
 from monai.networks.nets import UNet
 from monai.losses import DiceLoss
 import transformers
+import monai
 
 wandb.init(project="cryo-em")
 
@@ -57,8 +58,6 @@ model = torch.nn.DataParallel(UNet(
     num_res_units=2,
 )).to(device)
 
-criterion = DiceLoss(to_onehot_y=True, softmax=True)
-
 #model = torch.nn.DataParallel(SegFormer3D(in_channels=1, num_classes=7)).to(device)
 
 #model = torch.nn.DataParallel(SwinUNETR(
@@ -72,13 +71,15 @@ criterion = DiceLoss(to_onehot_y=True, softmax=True)
 # Create dataset
 dataset = CryoETDataset(
     "/scratch2/andregr/cryo-em/data/preprocessed/tensors/*.npy",
-    run_ids=["TS_5_4", "TS_6_4", "TS_6_6", "TS_69_2", "TS_73_6", "TS_86_3"]
+    crop_size=(64,64,64),
+    run_ids=["TS_5_4", "TS_6_4", "TS_6_6", "TS_69_2", "TS_73_6", "TS_86_3"]#, "TS_99_9"]
 )
 
 # Create dataloader
 dataloader = DataLoader(
     dataset,
     batch_size=32,
+    prefetch_factor=3,
     shuffle=True,
     num_workers=8,
     pin_memory=True
@@ -86,18 +87,17 @@ dataloader = DataLoader(
 class_weights = [1,1,0,2,1,2,1]
 class_weights = torch.tensor(class_weights).float().to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
-scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 0, len(dataloader) * 60)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 0, len(dataloader) * 50)
 
-#criterion = DiceLoss(to_onehot_y=True, softmax=True, weight=class_weights)
+dice_loss = DiceLoss(to_onehot_y=True, softmax=True)
+tversky_loss = monai.losses.TverskyLoss(softmax=True, to_onehot_y=True, alpha=1, beta=4, reduction="mean")
 
 train_transforms = Compose([
-    #RandSpatialCropSamplesD(keys=["tomograms", "labels"], roi_size=(128,128,128), num_samples=1, random_size=False),
     RandRotate90D(keys=["tomograms", "labels"], prob=0.5, spatial_axes=(1, 2)),
     RandFlipD(keys=["tomograms", "labels"], prob=0.5, spatial_axis=0),
     RandFlipD(keys=["tomograms", "labels"], prob=0.5, spatial_axis=1),
     RandFlipD(keys=["tomograms", "labels"], prob=0.5, spatial_axis=2),
-    #RandSpatialCropD(keys=["tomograms", "labels"], roi_size=(64,64,64), random_size=False),
     RandGaussianNoiseD(keys=["tomograms"], prob=0.5, mean=0.0, std=0.1)
     ])
 train_transforms.set_random_state(seed=123)
@@ -112,16 +112,12 @@ for epoch in range(60):
         batch["tomograms"] = (batch["tomograms"] - batch["tomograms"].mean()) / batch["tomograms"].std()
         batch = train_transforms(batch)
 
-        #tomograms = torch.cat([b["tomograms"][:,None] for b in batch]).to(device)
-        #labels = torch.cat([b["labels"].long() for b in batch]).to(device)
         tomograms = batch["tomograms"][:,None].to(device)
         labels = batch["labels"][:,None].long().to(device)
 
         out = model(tomograms)
 
-        #loss = jaccard_loss(out, labels, eps=1e-3)
-        #loss = F.cross_entropy(out, labels)#, weight=class_weights)
-        loss = criterion(out, labels)
+        loss = dice_loss(out, labels) 
 
         loss.backward()
         optimizer.step()
@@ -145,3 +141,5 @@ for epoch in range(60):
 
 score = inference(model, "TS_99_9")
 wandb.log({"score": score})
+
+torch.save(model.state_dict(), "model.pth")

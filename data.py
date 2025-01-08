@@ -8,29 +8,33 @@ import glob
 import torch
 import numpy as np
 from einops import rearrange
+import copick
+import random
 
 class CryoETDataset(Dataset):
-    def __init__(self, path, run_ids=[]):
+    def __init__(self, path, crop_size, run_ids=[]):
 
         self.data = glob.glob(path)
+        self.crop_size = crop_size
+        root = copick.from_file("data/config.json")
 
-        # filter for files where path basename starts with any of the run_ids
-        self.data = [d for d in self.data if any([d.split("/")[-1].startswith(run_id) for run_id in run_ids])]
-
-        #self.class_weights = torch.zeros(7)
-        #for labels in self.labels:
-        #    self.class_weights += labels.sum(axis=(1,2,3))
-        #self.class_weights /= self.class_weights.sum()
-        #self.class_weights = 1 / self.class_weights
+        self.tomograms = [(run.name, run.voxel_spacings[0].get_tomograms("denoised")[0].numpy()) for run in root.runs if run.name in run_ids]
 
     def __len__(self):
-        return len(self.data)
+        return 5000
 
     def __getitem__(self, idx):
             
-        data = np.load(self.data[idx], allow_pickle=True)
+        idx = random.randint(0, len(self.tomograms) - 1)
+        run_name, tomogram = self.tomograms[idx]
+        i, j, k = [random.randint(0, tomogram.shape[i] - self.crop_size[i]) for i in range(3)]
+
+        labels = np.load("data/preprocessed/labels/" + run_name + ".npy")
+
+        tomogram = tomogram[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]]
+        labels = labels[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]]
 
         return {
-            'tomograms': data.item()["tomogram"],
-            'labels': data.item()["labels"],
+            'tomograms': tomogram,
+            'labels': labels,
         }
