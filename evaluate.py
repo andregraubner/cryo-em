@@ -19,66 +19,6 @@ from scipy import ndimage
 import torch
 import torch.nn.functional as F
 
-import torch
-import torch.nn.functional as F
-
-def erode_3d_mask_torch(mask, erosion_size=1, iterations=5, device='cuda'):
-    """
-    Erode a 3D segmentation mask using PyTorch.
-    
-    Parameters:
-    mask: 3D torch tensor containing segmentation labels
-    erosion_size: Size of the erosion kernel (default=1)
-    iterations: Number of times to perform erosion (default=5)
-    device: Device to perform computations on (default='cuda')
-    
-    Returns:
-    Eroded mask with same shape as input
-    """
-    # Ensure mask is on the correct device
-    mask = mask.to(device)
-    
-    # Create a 3D kernel for erosion
-    kernel = torch.ones((1, 1, erosion_size, erosion_size, erosion_size), device=device)
-    
-    # Add batch and channel dimensions if they don't exist
-    if mask.dim() == 3:
-        mask = mask.unsqueeze(0).unsqueeze(0)
-    
-    # Initialize output mask
-    eroded_mask = torch.zeros_like(mask)
-    
-    # Calculate proper padding
-    pad_size = erosion_size // 2
-    
-    # Get unique labels
-    unique_labels = torch.unique(mask)
-    
-    # Process each label
-    for label in unique_labels:
-        if label == 0:  # Skip background
-            continue
-            
-        # Create binary mask for current label
-        binary_mask = (mask == label).float()
-        
-        # Perform erosion multiple times
-        eroded_binary = binary_mask
-        for _ in range(iterations):
-            # Perform erosion using convolution with explicit padding
-            padded = F.pad(eroded_binary, (pad_size,)*6, mode='replicate')
-            eroded_binary = F.conv3d(padded, kernel, padding=0)
-            eroded_binary = (eroded_binary >= kernel.sum()).float()
-        
-        # Add eroded region back to output mask
-        eroded_mask[eroded_binary == 1] = label
-    
-    # Remove batch and channel dimensions if they were added
-    if mask.dim() == 5:
-        eroded_mask = eroded_mask.squeeze(0).squeeze(0)
-    
-    return eroded_mask
-
 def inference(model, run_name):
 
     model.eval()
@@ -117,7 +57,9 @@ def inference(model, run_name):
 
     annotations = pd.read_csv(f"data/preprocessed/annotations/{run_name}.csv")
 
-    return score(annotations, result, distance_multiplier=0.5, beta=4)
+    s = score(annotations, result, distance_multiplier=0.5, beta=4)
+    print(s)
+    return s
 
 class ParticipantVisibleError(Exception):
     pass
