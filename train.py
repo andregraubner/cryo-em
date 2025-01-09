@@ -2,7 +2,6 @@ from segformer3d import SegFormer3D
 from data import CryoETDataset
 import torch
 from torch.utils.data import Dataset, DataLoader
-from utils import jaccard_loss, create_submission
 from tqdm import tqdm
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -38,10 +37,10 @@ from monai.transforms import (
     RandSpatialCropSamplesD,
     RandFlipD
 )
-from monai.networks.nets import SwinUNETR
+from monai.networks.nets import SwinUNETR, UNETR
 import wandb
 from monai.networks.nets import UNet
-from monai.losses import DiceLoss
+from monai.losses import DiceLoss, DiceFocalLoss
 import transformers
 import monai
 
@@ -49,30 +48,30 @@ wandb.init(project="cryo-em")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+weights = torch.load("synthetic_model.pth")
+
+"""
 model = torch.nn.DataParallel(UNet(
     spatial_dims=3,
     in_channels=1,
     out_channels=7,
-    channels=(16, 32, 64, 128, 256, 512),
-    strides=(2, 2, 2, 2, 2),
-    num_res_units=2,
+    channels=(16, 32, 64, 128, 256),
+    strides=(2, 2, 2, 2),
+    num_res_units=4,
 )).to(device)
+"""
 
-#model = torch.nn.DataParallel(SegFormer3D(in_channels=1, num_classes=7)).to(device)
+model = torch.nn.DataParallel(UNETR(img_size=(64,64,64), in_channels=1, out_channels=7, feature_size=32, norm_name='batch', spatial_dims=3)).to(device)
 
-#model = torch.nn.DataParallel(SwinUNETR(
-#    #img_size=(64, 64, 64),
-#    in_channels=1,
-#    out_channels=7,
-#    feature_size=48,
-#    use_checkpoint=True,
-#)).to(device)
+#model = torch.nn.DataParallel(SwinUNETR(img_size=(64,64,64), in_channels=1, out_channels=7, num_heads=(3, 6, 12, 24), feature_size=24)).to(device)
+
+#model.load_state_dict(weights)
 
 # Create dataset
 dataset = CryoETDataset(
     "/scratch2/andregr/cryo-em/data/preprocessed/tensors/*.npy",
     crop_size=(64,64,64),
-    epoch_length=10,
+    epoch_length=10000,
     run_ids=["TS_5_4", "TS_6_4", "TS_6_6", "TS_69_2", "TS_73_6", "TS_86_3"]#, "TS_99_9"]
 )
 
@@ -80,19 +79,18 @@ dataset = CryoETDataset(
 dataloader = DataLoader(
     dataset,
     batch_size=32,
-    prefetch_factor=3,
+    prefetch_factor=2,
     shuffle=True,
-    num_workers=8,
+    num_workers=4,
     pin_memory=True
 )
 class_weights = [1,1,0,2,1,2,1]
 class_weights = torch.tensor(class_weights).float().to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 0, len(dataloader) * 50)
+optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+scheduler = transformers.get_linear_schedule_with_warmup(optimizer, 0, len(dataloader) * 100)
 
-dice_loss = DiceLoss(to_onehot_y=True, softmax=True)
-tversky_loss = monai.losses.TverskyLoss(softmax=True, to_onehot_y=True, alpha=1, beta=4, reduction="mean")
+dice_loss = DiceLoss(to_onehot_y=True, softmax=True, batch=True)
 
 train_transforms = Compose([
     RandRotate90D(keys=["tomograms", "labels"], prob=0.5, spatial_axes=(1, 2)),
@@ -100,11 +98,12 @@ train_transforms = Compose([
     RandFlipD(keys=["tomograms", "labels"], prob=0.5, spatial_axis=1),
     RandFlipD(keys=["tomograms", "labels"], prob=0.5, spatial_axis=2),
     RandGaussianNoiseD(keys=["tomograms"], prob=0.5, mean=0.0, std=0.1)
-    ])
+])
 train_transforms.set_random_state(seed=123)
 
+samples_seen = 0
 # Example iteration
-for epoch in range(60):
+for epoch in range(1000):
     model.train()
     for batch in tqdm(dataloader):
 
@@ -118,27 +117,23 @@ for epoch in range(60):
 
         out = model(tomograms)
 
-        loss = dice_loss(out, labels) 
+        loss = dice_loss(out, labels) #+ 0.1 * F.cross_entropy(out, labels[:,0], weight=class_weights)
 
         loss.backward()
         optimizer.step()
         scheduler.step()
+        samples_seen += tomograms.shape[0]
 
         wandb.log({
             "loss": loss.item(),
-            "lr": scheduler.get_last_lr()[0]
+            "lr": scheduler.get_last_lr()[0],
+            "samples": samples_seen
         })
         
-
     if epoch % 1 == 0:
-
-        outputs = out.argmax(1)[0].cpu().numpy()
-
-        #save_image(make_grid(labels[0,::5,None,:,:].float(), normalize=True), "labels.jpg")
-        #save_image(make_grid(torch.tensor(outputs[::5,None,:,:]).float(), normalize=True), "preds.jpg")
-
         score = inference(model, "TS_99_9")
         wandb.log({"score": score})
+        torch.save(model.state_dict(), "model.pth")
 
 score = inference(model, "TS_99_9")
 wandb.log({"score": score})
