@@ -12,16 +12,17 @@ import copick
 import random
 
 class CryoETDataset(Dataset):
-    def __init__(self, path, crop_size, run_ids=[]):
+    def __init__(self, path, crop_size, epoch_length=1000, run_ids=[]):
 
         self.data = glob.glob(path)
         self.crop_size = crop_size
+        self.epoch_length = epoch_length
         root = copick.from_file("data/config.json")
 
         self.tomograms = [(run.name, run.voxel_spacings[0].get_tomograms("denoised")[0].numpy()) for run in root.runs if run.name in run_ids]
 
     def __len__(self):
-        return 5000
+        return self.epoch_length
 
     def __getitem__(self, idx):
             

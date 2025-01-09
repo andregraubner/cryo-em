@@ -72,6 +72,7 @@ model = torch.nn.DataParallel(UNet(
 dataset = CryoETDataset(
     "/scratch2/andregr/cryo-em/data/preprocessed/tensors/*.npy",
     crop_size=(64,64,64),
+    epoch_length=10,
     run_ids=["TS_5_4", "TS_6_4", "TS_6_6", "TS_69_2", "TS_73_6", "TS_86_3"]#, "TS_99_9"]
 )
 
@@ -129,7 +130,7 @@ for epoch in range(60):
         })
         
 
-    if epoch % 20 == 0:
+    if epoch % 1 == 0:
 
         outputs = out.argmax(1)[0].cpu().numpy()
 
