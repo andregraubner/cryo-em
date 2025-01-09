@@ -33,10 +33,24 @@ for root, _, files in os.walk(source_dir):
             os.rename(old_path, new_path)
             print(f"Renamed: {old_path} -> {new_path}")
 
+# Create segmentation masks for each synthetic run
+synthetic_runs = glob.glob("/scratch2/andregr/cryo-em/data/10441/TS_*/",)
+for p in synthetic_runs:
+    print(p)
+    labels = np.zeros(shape=(200, 630, 630))
+    for i in range(1, 7):
+        label_path = glob.glob(p + f"/Reconstructions/VoxelSpacing10.000/Annotations/10{i}/*.mrc")[0]
+        labels += mrcfile.open(label_path).data * i
+
+    # Get run name
+    run_name = p.split("/")[-2]
+    np.save(f'preprocessed/synthetic_labels/{run_name}.npy', labels.astype(np.uint8))
+
+quit()
+# Now, create segmentation masks for each real run
 root = copick.from_file("config.json")
 objects = [obj for obj in root.pickable_objects if obj.is_particle]
 
-# Now, create segmentation masks for each run
 for run in tqdm(root.runs):
 
     tomogram = run.voxel_spacings[0].get_tomograms("denoised")[0].numpy()
