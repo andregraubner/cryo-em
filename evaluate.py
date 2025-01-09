@@ -19,6 +19,23 @@ from scipy import ndimage
 import torch
 import torch.nn.functional as F
 
+def gaussian_kernel_3d(kernel_size, sigma):
+    # Create a 3D grid of (x, y, z) coordinates
+    coords = torch.meshgrid(
+        [torch.arange(kernel_size, dtype=torch.float32) - kernel_size // 2] * 3
+    )
+    x, y, z = coords[0], coords[1], coords[2]
+
+    # Compute the squared distance from the center of the kernel
+    distance_squared = x**2 + y**2 + z**2
+
+    # Compute the Gaussian function for each point in the grid
+    kernel = torch.exp(-distance_squared / (2 * sigma**2))
+
+    # Normalize the kernel so that the sum of all elements equals 1
+    kernel = kernel / kernel.sum()
+    return kernel
+
 def inference(model, run_name):
 
     model.eval()
@@ -43,8 +60,14 @@ def inference(model, run_name):
                     counts[z:z+64,y:y+64,x:x+64] += 1
 
         preds /= counts
+
+        kernel = gaussian_kernel_3d(11, 1)[None, None].cuda()
+        preds = F.conv3d(preds[:,None], kernel, padding="same")[:,0]
+
         preds = preds.argmax(0)
         preds = preds[:,5:-5, 5:-5]
+
+    plt.imsave("preds.png", preds[90].cpu().numpy())
 
     result = create_submission(preds, run_name)
 
