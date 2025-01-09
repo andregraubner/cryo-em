@@ -5,6 +5,9 @@ import numpy as np
 import torch.nn.functional as F
 from scipy.ndimage import label, center_of_mass
 import pandas as pd
+import cc3d
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 label_to_particle_type = {
     1: "apo-ferritin",
@@ -15,81 +18,88 @@ label_to_particle_type = {
     6: "virus-like-particle"
 }
 
+#faster version using cuda
+#https://github.com/kornia/kornia/blob/9ccae8c297a00a35d811b5a6e4f468a1d54d17f4/kornia/contrib/connected_components.py#L7
+#https://stackoverflow.com/questions/46840707/efficiently-find-centroid-of-labelled-image-regions
+def find_connected_component(probability, max_radius=100):
+    device = probability.device
+    probability = probability.detach()
+    num_particle_type = 6
+    D, H, W = probability.shape
+    mask = F.one_hot(probability, num_classes=7).bool().permute(3,0,1,2)[1:]
+
+    # allocate the output tensors for labels
+    out = (torch.arange(D * H * W, device=device, dtype=torch.float32)+1).reshape(1, D, H, W)
+    out = out.repeat(num_particle_type, 1, 1, 1)
+    out[~mask] = 0
+
+    out = out.reshape(num_particle_type, 1, D, H, W)
+    mask = mask.reshape(num_particle_type, 1, D, H, W)
+    for _ in range(max_radius):
+        out = F.max_pool3d(out, kernel_size=3, stride=1, padding=1)
+        out = torch.mul(out, mask)  # mask using element-wise multiplication
+    out = out.reshape(num_particle_type, D, H, W)
+    out = out.short()
+    
+    component=[]
+    
+    for i in range(num_particle_type):
+        u, inverse = torch.unique(out[i], sorted=True, return_inverse=True)
+
+        out[i] = inverse
+        #component.append(inverse)
+    #component = torch.stack(component)
+
+    return out
+    
+def find_centroid(component):
+    device = component.device
+    num_particle_type, D, H, W = component.shape
+    count = component.flatten(1).max(-1)[0]+1
+    cumcount = torch.zeros(num_particle_type+1, dtype=torch.int32, device=device)
+    cumcount[1:] = torch.cumsum(count,0)
+    component = component+cumcount[:-1].reshape(num_particle_type,1,1,1)
+
+    gridz = torch.arange(0, D, device=device).reshape(1,D,1,1).expand(num_particle_type,-1,H,W)
+    gridy = torch.arange(0, H, device=device).reshape(1,1,H,1).expand(num_particle_type,D,-1,W)
+    gridx = torch.arange(0, W, device=device).reshape(1,1,1,W).expand(num_particle_type,D,H,-1)
+    n  = torch.bincount(component.flatten())
+    nx = torch.bincount(component.flatten(),weights=gridx.flatten())
+    ny = torch.bincount(component.flatten(),weights=gridy.flatten())
+    nz = torch.bincount(component.flatten(),weights=gridz.flatten())
+
+    x=nx/n
+    y=ny/n
+    z=nz/n
+    zyx = torch.stack([z,y,x],1).float()
+    zyx = torch.split(zyx, count.tolist(), dim=0)
+    centroid = [zzyyxx[1:] for zzyyxx in zyx]
+    return centroid 
+
 def create_submission(preds, experiment):
 
-    centroids_by_class = {}
-
-    for class_label in range(1, 7):  # Skip class 0 (background)
-        # Create a binary mask for the current class
-        class_mask = (preds == class_label)
-
-        # Label connected components for the current class
-        labeled_volume, num_features = label(class_mask)
-
-        # Compute centroids for connected components
-        centroids = center_of_mass(class_mask, labeled_volume, range(1, num_features + 1))
-
-        # Store centroids in the dictionary
-        centroids_by_class[class_label] = centroids
+    with torch.no_grad():
+        components = find_connected_component(preds)
+        centroids = find_centroid(components)
 
     submission_data = []
 
     id_counter = 0
-    for label_id, centroids in centroids_by_class.items():
+    for label_id, centroids in enumerate(centroids):
+        label_id += 1  # Skip class 0 (background)
         particle_type = label_to_particle_type.get(label_id, "unknown")
         for centroid in centroids:
             submission_data.append({
                 "id": id_counter,
                 "experiment": experiment,
                 "particle_type": particle_type,
-                "x": centroid[2] * 10,  # Centroid format is (z, y, x)
-                "y": centroid[1] * 10,
-                "z": centroid[0] * 10
+                "x": centroid[2].item() * 10,  # Centroid format is (z, y, x)
+                "y": centroid[1].item() * 10,
+                "z": centroid[0].item() * 10
             })
-            id_counter += 1
+            id_counter += 1 
 
     # Convert to DataFrame
     submission_df = pd.DataFrame(submission_data)
+    print(submission_df)
     return submission_df
-
-def jaccard_loss(logits, true, eps=1e-7):
-    """Computes the Jaccard loss, a.k.a the IoU loss.
-    Modified to handle n-dimensional inputs.
-    
-    Args:
-        true: a tensor of shape [B, *spatial_dims] or [B, 1, *spatial_dims].
-        logits: a tensor of shape [B, C, *spatial_dims]. Corresponds to
-            the raw output or logits of the model.
-        eps: added to the denominator for numerical stability.
-    Returns:
-        jacc_loss: the Jaccard loss.
-    """
-    num_classes = logits.shape[1]
-    
-    # Handle arbitrary spatial dimensions
-    spatial_dims = true.shape[2:] if true.shape[1] == 1 else true.shape[1:]
-    
-    # Reshape true to [B, -1] to use torch.eye
-    true_flat = true.reshape(true.shape[0], -1)
-    if true.shape[1] == 1:
-        true_flat = true_flat.squeeze(1)
-    
-    # Convert to one-hot encoding
-    true_1_hot = torch.eye(num_classes, device=true.device)[true_flat]
-    
-    # Reshape back to match logits shape
-    new_shape = (true.shape[0], num_classes) + spatial_dims
-    true_1_hot = true_1_hot.reshape(new_shape)
-    
-    probas = F.softmax(logits, dim=1)
-    true_1_hot = true_1_hot.type(logits.type())
-    
-    # Calculate dims for reduction
-    dims = (0,) + tuple(range(2, len(true_1_hot.shape)))
-    
-    intersection = torch.sum(probas * true_1_hot, dims)
-    cardinality = torch.sum(probas + true_1_hot, dims)
-    union = cardinality - intersection
-    jacc_loss = (intersection / (union + eps)).mean()
-    
-    return (1 - jacc_loss)

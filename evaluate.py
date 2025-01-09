@@ -2,7 +2,7 @@ from segformer3d import SegFormer3D
 from data import CryoETDataset
 import torch
 from torch.utils.data import Dataset, DataLoader
-from utils import jaccard_loss, create_submission
+from utils import create_submission
 from tqdm import tqdm
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -43,15 +43,8 @@ def inference(model, run_name):
                     counts[z:z+64,y:y+64,x:x+64] += 1
 
         preds /= counts
-        preds = ndimage.gaussian_filter(preds.cpu().numpy(), sigma=3, radius=30, axes=(1,2,3))
         preds = preds.argmax(0)
         preds = preds[:,5:-5, 5:-5]
-
-    #preds = ndimage.binary_erosion(preds, iterations=1)
-
-    #eroded_mask = erode_3d_mask_torch(torch.tensor(preds, device="cuda"), erosion_size=2, iterations=5, device="cuda").cpu().numpy()
-
-    plt.imsave("preds.png", preds[90], cmap="inferno")
 
     result = create_submission(preds, run_name)
 
