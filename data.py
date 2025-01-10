@@ -30,14 +30,14 @@ class CryoETDataset(Dataset):
         run_name, tomogram = self.tomograms[idx]
         i, j, k = [random.randint(0, tomogram.shape[i] - self.crop_size[i]) for i in range(3)]
 
-        labels = np.load("data/preprocessed/labels/" + run_name + ".npy")
+        labels = np.load("data/preprocessed/labels/" + run_name + ".npy", mmap_mode='r').copy()
 
         tomogram = tomogram[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]]
         labels = labels[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]]
 
         return {
-            'tomograms': tomogram,
-            'labels': labels,
+            'tomograms': tomogram[None],
+            'labels': labels[None],
         }
 
 class SyntheticCryoETDataset(Dataset):
