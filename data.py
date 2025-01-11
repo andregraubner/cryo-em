@@ -76,3 +76,30 @@ class SyntheticCryoETDataset(Dataset):
             'tomograms': tomogram,
             'labels': labels,
         }
+
+class PretrainingCryoETDataset(Dataset):
+    def __init__(self, path, crop_size, epoch_length=1000):
+
+        self.fnames = glob.glob(path)
+        self.crop_size = crop_size
+        self.epoch_length = epoch_length
+
+    def __len__(self):
+        return self.epoch_length
+
+    def __getitem__(self, idx):
+            
+        fname = random.choice(self.fnames)
+
+        tomogram = mrcfile.mmap(fname, mode='r').data
+        #print(mrcfile.mmap(fname, mode='r').voxel_size)
+
+        i, j, k = [random.randint(0, tomogram.shape[i] - self.crop_size[i]) for i in range(3)]
+        tomogram = tomogram[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]].copy()
+
+        tomogram = torch.from_numpy(tomogram)[None].float()
+
+        return {
+            'tomograms': tomogram,
+            'fname': fname,
+        }
