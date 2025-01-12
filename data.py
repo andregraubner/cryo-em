@@ -94,6 +94,10 @@ class PretrainingCryoETDataset(Dataset):
         tomogram = mrcfile.mmap(fname, mode='r').data
         #print(mrcfile.mmap(fname, mode='r').voxel_size)
 
+        # If the tomogram is smaller than the crop size, try again
+        if any([tomogram.shape[i] < self.crop_size[i] for i in range(3)]):
+            return self.__getitem__(idx)
+
         i, j, k = [random.randint(0, tomogram.shape[i] - self.crop_size[i]) for i in range(3)]
         tomogram = tomogram[i:i+self.crop_size[0], j:j+self.crop_size[1], k:k+self.crop_size[2]].copy()
 
